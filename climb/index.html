@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Matcha Climb — climb up, grab your matcha!</title>
+<meta name="description" content="Matcha Climb: a cute free arcade climbing game. Dodge rolling yoga balls, climb the ladders, grab your matcha latte at the top!">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%; overflow: hidden;
+    background: #0d0d14;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+  }
+  #game { position: fixed; inset: 0; display: block; }
+
+  #hud {
+    position: fixed; top: max(10px, env(safe-area-inset-top)); left: 0; right: 0;
+    display: flex; justify-content: center; gap: 18px;
+    color: #fff; font-weight: 800; font-size: 17px;
+    text-shadow: 0 2px 8px rgba(0,0,0,.6);
+    pointer-events: none; opacity: 0; transition: opacity .25s;
+  }
+  #hud .lives { color: #ff6b8a; letter-spacing: 2px; }
+  #hud .bonus { color: #9ef0c0; }
+  #hud .level { color: #ffd76a; }
+
+  .overlay {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; color: #fff;
+    background: rgba(10, 10, 18, .72);
+    backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+    transition: opacity .25s; z-index: 5;
+  }
+  .overlay.hidden { opacity: 0; pointer-events: none; }
+  h1 { font-size: 44px; font-weight: 900; margin-bottom: 4px; }
+  h1 .m { color: #9ef0c0; }
+  .sub { opacity: .8; margin-bottom: 22px; font-size: 16px; }
+
+  .howto {
+    background: rgba(255,255,255,.07); border-radius: 16px;
+    padding: 16px 22px; margin-bottom: 24px;
+    font-size: 16px; line-height: 2; text-align: left;
+  }
+  .howto b { color: #9ef0c0; }
+  .howto .key {
+    display: inline-block; min-width: 26px; padding: 1px 7px;
+    background: rgba(255,255,255,.15); border-radius: 6px;
+    font-size: 14px; text-align: center; font-weight: 700;
+  }
+
+  button {
+    font: inherit; font-size: 19px; font-weight: 800;
+    color: #0d0d14; background: #9ef0c0;
+    border: none; border-radius: 999px; padding: 15px 42px;
+    cursor: pointer; box-shadow: 0 4px 20px rgba(158,240,192,.35);
+    transition: transform .12s;
+  }
+  button:active { transform: scale(.94); }
+  .big { font-size: 66px; margin: 6px 0 2px; }
+  .gold { color: #ffd76a; font-weight: 800; }
+
+  /* touch controls */
+  #touch {
+    position: fixed; left: 0; right: 0;
+    bottom: max(14px, env(safe-area-inset-bottom));
+    display: none; justify-content: space-between;
+    padding: 0 18px; z-index: 4; pointer-events: none;
+  }
+  #touch.show { display: flex; }
+  .pad { display: flex; gap: 10px; align-items: flex-end; }
+  .tbtn {
+    pointer-events: auto;
+    width: 62px; height: 62px; border-radius: 50%;
+    background: rgba(255,255,255,.14);
+    border: 2px solid rgba(255,255,255,.25);
+    color: #fff; font-size: 24px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .tbtn:active { background: rgba(255,255,255,.3); }
+  #btnJump { width: 74px; height: 74px; background: rgba(158,240,192,.25); border-color: rgba(158,240,192,.6); font-size: 15px; }
+  .updown { display: flex; flex-direction: column; gap: 10px; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud">
+  <span class="lives" id="lives">♥♥♥</span>
+  <span id="score">SCORE 0</span>
+  <span class="bonus" id="bonus">BONUS 5000</span>
+  <span class="level" id="level">LV 1</span>
+</div>
+
+<div id="menu" class="overlay">
+  <h1><span class="m">Matcha</span> Climb</h1>
+  <div class="sub">Mina wants her matcha latte. It's at the top. 🍵</div>
+  <div class="howto">
+    🎯 <b>Goal:</b> climb to the matcha at the top!<br>
+    <span class="key">◀</span> <span class="key">▶</span> walk &nbsp;·&nbsp; <span class="key">▲</span> <span class="key">▼</span> climb ladders<br>
+    <span class="key">SPACE</span> jump over the rolling yoga balls<br>
+    💡 balls can't be out-run — <b>jump</b> them or use ladders!
+  </div>
+  <button id="start">Start climbing</button>
+</div>
+
+<div id="win" class="overlay hidden">
+  <div style="font-size:56px">🍵✨</div>
+  <h1>Matcha get!</h1>
+  <div class="sub">Bonus <span class="gold" id="winbonus">0</span> — next floor is faster…</div>
+</div>
+
+<div id="dead" class="overlay hidden">
+  <div style="font-size:56px">💫</div>
+  <h1 id="deadtitle">Ouch!</h1>
+  <div class="sub" id="deadsub">Watch the yoga balls…</div>
+</div>
+
+<div id="gameover" class="overlay hidden">
+  <div class="sub" style="letter-spacing:3px">GAME OVER · SCORE</div>
+  <div class="big" id="final">0</div>
+  <div class="sub" id="besttext">best 0</div>
+  <button id="retry">Try again</button>
+</div>
+
+<div id="touch">
+  <div class="pad">
+    <div class="tbtn" data-k="left">◀</div>
+    <div class="tbtn" data-k="right">▶</div>
+  </div>
+  <div class="pad">
+    <div class="updown">
+      <div class="tbtn" data-k="up">▲</div>
+      <div class="tbtn" data-k="down">▼</div>
+    </div>
+    <div class="tbtn" id="btnJump" data-k="jump">JUMP</div>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const $ = id => document.getElementById(id);
+const hud = $("hud"), livesEl = $("lives"), scoreEl = $("score"),
+      bonusEl = $("bonus"), levelEl = $("level");
+
+// ---- virtual playfield ----
+const VW = 420, VH = 780;
+let W = 0, H = 0, DPR = 1, SCALE = 1, OX = 0, OY = 0;
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth || document.documentElement.clientWidth || 360;
+  H = window.innerHeight || document.documentElement.clientHeight || 640;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  canvas.style.width = W + "px"; canvas.style.height = H + "px";
+  SCALE = Math.min(W / VW, H / VH);
+  OX = (W - VW * SCALE) / 2;
+  OY = (H - VH * SCALE) / 2;
+}
+window.addEventListener("resize", resize);
+resize();
+
+// ---- level geometry (flat girders, zig-zag drops) ----
+// dir: which way balls roll on this girder (+1 right, -1 left)
+const PLATS = [
+  { y: 180, x0: 0,  x1: 390, dir: 1 },   // top: bear at left, matcha at right
+  { y: 290, x0: 30, x1: 420, dir: -1 },
+  { y: 400, x0: 0,  x1: 390, dir: 1 },
+  { y: 510, x0: 30, x1: 420, dir: -1 },
+  { y: 620, x0: 0,  x1: 390, dir: 1 },
+  { y: 730, x0: 0,  x1: 420, dir: -1 },  // ground: balls roll off the left edge
+];
+// ladders: top platform index is i, bottom is i+1
+const LADDERS = [
+  { x: 120, top: 0, bot: 1 }, { x: 300, top: 0, bot: 1 },
+  { x: 60,  top: 1, bot: 2 }, { x: 240, top: 1, bot: 2 },
+  { x: 180, top: 2, bot: 3 }, { x: 360, top: 2, bot: 3 },
+  { x: 60,  top: 3, bot: 4 }, { x: 300, top: 3, bot: 4 },
+  { x: 150, top: 4, bot: 5 }, { x: 330, top: 4, bot: 5 },
+];
+const BEAR = { x: 46, plat: 0 };
+const GOAL = { x: 358, plat: 0 };
+
+// ---- state ----
+const S = { MENU: 0, PLAY: 1, WIN: 2, DEAD: 3, OVER: 4 };
+let state = S.MENU;
+let p, balls, score, lives, level, bonus, bonusClock, spawnClock, bearArm, time;
+let best = +(localStorage.getItem("matchaclimb.best") || 0);
+const input = { left: false, right: false, up: false, down: false, jump: false };
+let jumpLatch = false;
+
+function levelSpeed()  { return 1.5 + (level - 1) * 0.3; }
+function spawnEvery()  { return Math.max(100, 200 - (level - 1) * 20); }  // in ticks
+function ladderChance(){ return Math.min(0.35, 0.12 + (level - 1) * 0.05); }
+
+function resetPlayer() {
+  p = { x: 40, y: PLATS[5].y, vy: 0, plat: 5, onGround: true,
+        climbing: false, ladder: -1, facing: 1, anim: 0, invuln: 120 };
+}
+function newGame() {
+  score = 0; lives = 3; level = 1;
+  newFloor();
+  updateHUD();
+}
+function newFloor() {
+  balls = [];
+  bonus = 5000; bonusClock = 0; spawnClock = spawnEvery() - 30;
+  bearArm = 0; time = 0;
+  resetPlayer();
+}
+function updateHUD() {
+  livesEl.textContent = "♥".repeat(lives) + "♡".repeat(3 - lives);
+  scoreEl.textContent = "SCORE " + score;
+  bonusEl.textContent = "BONUS " + bonus;
+  levelEl.textContent = "LV " + level;
+}
+
+// ---- input ----
+const KEYMAP = { ArrowLeft: "left", a: "left", ArrowRight: "right", d: "right",
+                 ArrowUp: "up", w: "up", ArrowDown: "down", s: "down", " ": "jump", z: "jump" };
+window.addEventListener("keydown", e => {
+  const k = KEYMAP[e.key];
+  if (k) { e.preventDefault(); input[k] = true; }
+  if ((e.key === "Enter" || e.key === " ") && state === S.MENU) startGame();
+});
+window.addEventListener("keyup", e => { const k = KEYMAP[e.key]; if (k) input[k] = false; });
+document.querySelectorAll(".tbtn").forEach(b => {
+  const k = b.dataset.k;
+  const on = e => { e.preventDefault(); input[k] = true; };
+  const off = e => { e.preventDefault(); input[k] = false; };
+  b.addEventListener("pointerdown", on);
+  b.addEventListener("pointerup", off);
+  b.addEventListener("pointercancel", off);
+  b.addEventListener("pointerleave", off);
+});
+if (window.matchMedia("(pointer: coarse)").matches) $("touch").classList.add("show");
+
+$("start").addEventListener("click", startGame);
+$("retry").addEventListener("click", () => { $("gameover").classList.add("hidden"); startGame(); });
+function startGame() {
+  $("menu").classList.add("hidden");
+  hud.style.opacity = 1;
+  newGame();
+  state = S.PLAY;
+}
+
+// ---- mechanics ----
+function findLanding(x, yFrom, yTo) {
+  // first platform whose surface lies in (yFrom, yTo] and spans x
+  for (const pl of PLATS) {
+    if (pl.y > yFrom && pl.y <= yTo && x >= pl.x0 - 4 && x <= pl.x1 + 4) return pl;
+  }
+  return null;
+}
+const platIndex = pl => PLATS.indexOf(pl);
+
+function stepPlayer(dt) {
+  p.anim += dt;
+  if (p.invuln > 0) p.invuln -= dt;
+
+  if (p.climbing) {
+    const L = LADDERS[p.ladder];
+    const yTop = PLATS[L.top].y, yBot = PLATS[L.bot].y;
+    if (input.up)   p.y -= 1.9 * dt;
+    if (input.down) p.y += 1.9 * dt;
+    if (p.y <= yTop) { p.y = yTop; p.climbing = false; p.onGround = true; p.plat = L.top; }
+    if (p.y >= yBot) { p.y = yBot; p.climbing = false; p.onGround = true; p.plat = L.bot; }
+    return;
+  }
+
+  if (input.left)  { p.x -= 2.3 * dt; p.facing = -1; }
+  if (input.right) { p.x += 2.3 * dt; p.facing = 1; }
+  p.x = Math.max(10, Math.min(VW - 10, p.x));
+
+  if (p.onGround) {
+    const pl = PLATS[p.plat];
+    // grab a ladder
+    if (input.up) {
+      const i = LADDERS.findIndex(L => L.bot === p.plat && Math.abs(p.x - L.x) < 15);
+      if (i >= 0) { p.climbing = true; p.ladder = i; p.x = LADDERS[i].x; p.onGround = false; return; }
+    }
+    if (input.down) {
+      const i = LADDERS.findIndex(L => L.top === p.plat && Math.abs(p.x - L.x) < 15);
+      if (i >= 0) { p.climbing = true; p.ladder = i; p.x = LADDERS[i].x; p.onGround = false; p.y += 2; return; }
+    }
+    // jump (latched so holding doesn't bounce)
+    if (input.jump && !jumpLatch) { jumpLatch = true; p.vy = -7.4; p.onGround = false; }
+    if (!input.jump) jumpLatch = false;
+    // walk off an edge
+    if (p.onGround && (p.x < pl.x0 - 4 || p.x > pl.x1 + 4)) { p.onGround = false; p.vy = 0; }
+  } else {
+    const yPrev = p.y;
+    p.vy += 0.38 * dt;
+    p.y += p.vy * dt;
+    if (p.vy > 0) {
+      const pl = findLanding(p.x, yPrev, p.y);
+      if (pl) { p.y = pl.y; p.vy = 0; p.onGround = true; p.plat = platIndex(pl); }
+      if (p.y > VH + 60) hitPlayer(); // safety net
+    }
+  }
+}
+
+function stepBalls(dt) {
+  spawnClock += dt;
+  if (spawnClock >= spawnEvery()) {
+    spawnClock = 0;
+    balls.push({ x: BEAR.x + 26, y: PLATS[0].y - 9, plat: 0, falling: false,
+                 onLadder: -1, checkedL: -1, scored: false });
+    bearArm = 22;
+  }
+  if (bearArm > 0) bearArm -= dt;
+
+  const spd = levelSpeed();
+  for (const b of balls) {
+    if (b.onLadder >= 0) {
+      const L = LADDERS[b.onLadder];
+      b.y += spd * 0.9 * dt;
+      if (b.y >= PLATS[L.bot].y - 9) { b.y = PLATS[L.bot].y - 9; b.plat = L.bot; b.onLadder = -1; }
+    } else if (b.falling) {
+      const yPrev = b.y;
+      b.vy += 0.38 * dt;
+      b.y += b.vy * dt;
+      const pl = findLanding(b.x, yPrev + 9, b.y + 9);
+      if (pl) { b.y = pl.y - 9; b.plat = platIndex(pl); b.falling = false; }
+    } else {
+      const pl = PLATS[b.plat];
+      b.x += pl.dir * spd * dt;
+      // sometimes take a ladder down (decided once per ladder)
+      for (let i = 0; i < LADDERS.length; i++) {
+        const L = LADDERS[i];
+        if (L.top === b.plat && Math.abs(b.x - L.x) < 4 && b.checkedL !== i) {
+          b.checkedL = i;
+          if (Math.random() < ladderChance()) { b.onLadder = i; b.x = L.x; }
+        }
+      }
+      if (b.onLadder < 0 && (b.x < pl.x0 - 8 || b.x > pl.x1 + 8)) {
+        if (b.plat === 5) b.dead = true;           // rolled off the ground floor
+        else { b.falling = true; b.vy = 0; }
+      }
+    }
+    // collision & jump-over bonus
+    if (state === S.PLAY && p.invuln <= 0) {
+      const dx = Math.abs(b.x - p.x), dy = (p.y - 14) - b.y;
+      if (dx < 13 && Math.abs(dy) < 16) { hitPlayer(); break; }
+      if (!b.scored && !p.onGround && !p.climbing && dx < 15 && b.y - p.y > 4) {
+        b.scored = true; score += 25; updateHUD();
+      }
+    }
+  }
+  balls = balls.filter(b => !b.dead && b.y < VH + 80);
+}
+
+function hitPlayer() {
+  lives--;
+  updateHUD();
+  if (lives <= 0) {
+    state = S.OVER;
+    const isBest = score > best;
+    if (isBest) { best = score; localStorage.setItem("matchaclimb.best", best); }
+    $("final").textContent = score;
+    $("besttext").className = "sub " + (isBest ? "gold" : "");
+    $("besttext").textContent = isBest ? "★ new best!" : "best " + best;
+    hud.style.opacity = 0;
+    setTimeout(() => $("gameover").classList.remove("hidden"), 500);
+  } else {
+    state = S.DEAD;
+    $("dead").classList.remove("hidden");
+    setTimeout(() => {
+      $("dead").classList.add("hidden");
+      resetPlayer();
+      state = S.PLAY;
+    }, 1100);
+  }
+}
+
+function checkWin() {
+  if (p.onGround && p.plat === GOAL.plat && Math.abs(p.x - GOAL.x) < 20) {
+    state = S.WIN;
+    score += bonus;
+    $("winbonus").textContent = "+" + bonus;
+    updateHUD();
+    $("win").classList.remove("hidden");
+    setTimeout(() => {
+      $("win").classList.add("hidden");
+      level++;
+      newFloor();
+      updateHUD();
+      state = S.PLAY;
+    }, 2200);
+  }
+}
+
+function step(dt) {
+  time += dt;
+  if (state === S.PLAY) {
+    bonusClock += dt;
+    if (bonusClock >= 110 && bonus > 0) { bonusClock = 0; bonus = Math.max(0, bonus - 100); updateHUD(); }
+    stepPlayer(dt);
+    stepBalls(dt);
+    checkWin();
+  } else if (state === S.MENU || state === S.WIN || state === S.DEAD) {
+    stepBalls(dt); // keep the world alive behind overlays
+  }
+  draw();
+}
+
+// ---- drawing ----
+function draw() {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, "#171422");
+  g.addColorStop(1, "#0d0d14");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  ctx.setTransform(DPR * SCALE, 0, 0, DPR * SCALE, DPR * OX, DPR * OY);
+
+  // ladders behind girders
+  for (const L of LADDERS) drawLadder(L);
+  for (const pl of PLATS) drawGirder(pl);
+  drawGoal();
+  drawBear();
+  for (const b of balls) drawBall(b);
+  if (state !== S.MENU) drawPlayer();
+}
+
+function drawGirder(pl) {
+  ctx.fillStyle = "#e4506e";
+  ctx.fillRect(pl.x0, pl.y, pl.x1 - pl.x0, 12);
+  ctx.strokeStyle = "rgba(0,0,0,.35)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let x = pl.x0 + 8; x < pl.x1 - 8; x += 16) {
+    ctx.moveTo(x, pl.y + 11); ctx.lineTo(x + 8, pl.y + 1);
+    ctx.moveTo(x + 8, pl.y + 1); ctx.lineTo(x + 16, pl.y + 11);
+  }
+  ctx.stroke();
+}
+
+function drawLadder(L) {
+  const y0 = PLATS[L.top].y + 6, y1 = PLATS[L.bot].y + 4;
+  ctx.strokeStyle = "#59d8d0";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(L.x - 8, y0); ctx.lineTo(L.x - 8, y1);
+  ctx.moveTo(L.x + 8, y0); ctx.lineTo(L.x + 8, y1);
+  for (let y = y0 + 8; y < y1; y += 13) { ctx.moveTo(L.x - 8, y); ctx.lineTo(L.x + 8, y); }
+  ctx.stroke();
+}
+
+function drawGoal() {
+  const y = PLATS[GOAL.plat].y;
+  // rolled yoga mat
+  ctx.fillStyle = "#f2a7c3";
+  ctx.beginPath(); ctx.roundRect(GOAL.x - 20, y - 14, 40, 14, 6); ctx.fill();
+  ctx.fillStyle = "#d97ba3";
+  ctx.beginPath(); ctx.arc(GOAL.x + 14, y - 7, 5, 0, 7); ctx.fill();
+  // matcha cup
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(GOAL.x - 8, y - 34, 16, 18);
+  ctx.fillStyle = "#8fd6a0";
+  ctx.fillRect(GOAL.x - 6, y - 32, 12, 5);
+  // sparkle
+  const tw = Math.sin(time / 14) * 0.5 + 0.5;
+  ctx.fillStyle = `rgba(255,235,150,${0.4 + tw * 0.6})`;
+  ctx.beginPath(); ctx.arc(GOAL.x + 13, y - 38 - tw * 3, 2.5, 0, 7); ctx.fill();
+  // arrow hint
+  ctx.fillStyle = "rgba(255,255,255,.85)";
+  ctx.font = "700 13px sans-serif"; ctx.textAlign = "center";
+  ctx.fillText("GOAL", GOAL.x, y - 48 - tw * 4);
+}
+
+function drawBear() {
+  const x = BEAR.x, y = PLATS[BEAR.plat].y;
+  const throwing = bearArm > 0;
+  ctx.fillStyle = "#8a5a3b";
+  ctx.beginPath(); ctx.ellipse(x, y - 22, 22, 22, 0, 0, 7); ctx.fill();      // body
+  ctx.beginPath(); ctx.arc(x, y - 50, 15, 0, 7); ctx.fill();                 // head
+  ctx.beginPath(); ctx.arc(x - 11, y - 61, 6, 0, 7); ctx.arc(x + 11, y - 61, 6, 0, 7); ctx.fill(); // ears
+  ctx.fillStyle = "#c99b72";
+  ctx.beginPath(); ctx.ellipse(x, y - 45, 7, 5.5, 0, 0, 7); ctx.fill();      // muzzle
+  ctx.fillStyle = "#2b1c10";
+  ctx.beginPath(); ctx.arc(x - 6, y - 52, 2, 0, 7); ctx.arc(x + 6, y - 52, 2, 0, 7); ctx.fill(); // eyes
+  ctx.beginPath(); ctx.arc(x, y - 47, 2.4, 0, 7); ctx.fill();                // nose
+  // throwing arm
+  ctx.strokeStyle = "#8a5a3b"; ctx.lineWidth = 8; ctx.lineCap = "round";
+  ctx.beginPath();
+  if (throwing) { ctx.moveTo(x + 14, y - 30); ctx.lineTo(x + 30, y - 44); }
+  else          { ctx.moveTo(x + 14, y - 28); ctx.lineTo(x + 26, y - 18); }
+  ctx.stroke();
+}
+
+function drawBall(b) {
+  ctx.fillStyle = "#a88bf0";
+  ctx.beginPath(); ctx.arc(b.x, b.y, 9, 0, 7); ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,.5)"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(b.x, b.y, 5.5, -0.8, 1.6); ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,.7)";
+  ctx.beginPath(); ctx.arc(b.x - 3, b.y - 3.5, 2, 0, 7); ctx.fill();
+}
+
+function drawPlayer() {
+  if (p.invuln > 0 && Math.floor(p.anim / 5) % 2 === 0 && state === S.PLAY) return; // blink
+  const x = p.x, y = p.y, f = p.facing;
+  const walking = (input.left || input.right) && p.onGround;
+  const legSwing = walking ? Math.sin(p.anim / 3.2) * 4 : 0;
+  const climbSwing = p.climbing && (input.up || input.down) ? Math.sin(p.anim / 3.5) * 5 : 0;
+
+  // legs — plum leggings + white sneakers
+  ctx.strokeStyle = "#7a4d8f"; ctx.lineWidth = 6; ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(x - 4, y - 16); ctx.lineTo(x - 4 + legSwing, y - 3);
+  ctx.moveTo(x + 4, y - 16); ctx.lineTo(x + 4 - legSwing, y - 3);
+  ctx.stroke();
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.roundRect(x - 8 + legSwing, y - 4, 8, 4, 2);
+  ctx.roundRect(x     - legSwing, y - 4, 8, 4, 2);
+  ctx.fill();
+
+  // torso — mint crop top over skin
+  ctx.fillStyle = "#f5cba7";
+  ctx.fillRect(x - 5, y - 22, 10, 6);           // midriff
+  ctx.fillStyle = "#9ef0c0";
+  ctx.beginPath(); ctx.roundRect(x - 6.5, y - 31, 13, 10, 3); ctx.fill();
+
+  // arms
+  ctx.strokeStyle = "#f5cba7"; ctx.lineWidth = 4.5;
+  ctx.beginPath();
+  if (p.climbing) {
+    ctx.moveTo(x - 6, y - 28); ctx.lineTo(x - 9, y - 38 + climbSwing);
+    ctx.moveTo(x + 6, y - 28); ctx.lineTo(x + 9, y - 38 - climbSwing);
+  } else {
+    ctx.moveTo(x - 6, y - 28); ctx.lineTo(x - 8 - legSwing * 0.5, y - 19);
+    ctx.moveTo(x + 6, y - 28); ctx.lineTo(x + 8 + legSwing * 0.5, y - 19);
+  }
+  ctx.stroke();
+
+  // head
+  ctx.fillStyle = "#f8d9b8";
+  ctx.beginPath(); ctx.arc(x, y - 40, 8.5, 0, 7); ctx.fill();
+  // hair — dark brown with high ponytail + pink scrunchie
+  ctx.fillStyle = "#3b2a20";
+  ctx.beginPath(); ctx.arc(x, y - 42, 8.5, Math.PI * 0.95, Math.PI * 2.05); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(x - f * 7, y - 49, 3.5, 5, f * 0.5, 0, 7); ctx.fill();
+  const tailSwing = Math.sin(p.anim / 4) * (walking || p.climbing ? 3 : 1);
+  ctx.beginPath(); ctx.ellipse(x - f * 9, y - 42 + tailSwing * 0.4, 3, 7, f * 0.35, 0, 7); ctx.fill();
+  ctx.fillStyle = "#ff8fb3";
+  ctx.beginPath(); ctx.arc(x - f * 7, y - 46, 2.2, 0, 7); ctx.fill();  // scrunchie
+  // face — big sparkly eyes, blush, tiny smile
+  ctx.fillStyle = "#2b1c10";
+  ctx.beginPath();
+  ctx.ellipse(x + f * 2.5, y - 40, 1.8, 2.4, 0, 0, 7);
+  ctx.ellipse(x + f * 6.5, y - 40, 1.8, 2.4, 0, 0, 7);
+  ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.beginPath(); ctx.arc(x + f * 3, y - 41, 0.7, 0, 7); ctx.arc(x + f * 7, y - 41, 0.7, 0, 7); ctx.fill();
+  ctx.fillStyle = "rgba(255,130,150,.55)";
+  ctx.beginPath(); ctx.arc(x + f * 1, y - 36.5, 1.6, 0, 7); ctx.arc(x + f * 7.5, y - 36.5, 1.6, 0, 7); ctx.fill();
+  ctx.strokeStyle = "#c96a6a"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(x + f * 4.5, y - 37.5, 1.6, 0.2, Math.PI - 0.2); ctx.stroke();
+}
+
+// ---- loop ----
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min((now - last) / 16.667, 3);
+  last = now;
+  step(dt);
+  requestAnimationFrame(frame);
+}
+newGame();
+requestAnimationFrame(frame);
+
+// headless test hook (harmless in production)
+window.__climb = {
+  step, input,
+  start: () => { if (state !== S.PLAY) startGame(); },
+  info: () => ({ state, score, lives, level, bonus,
+    p: { x: p.x, y: p.y, plat: p.plat, onGround: p.onGround, climbing: p.climbing },
+    balls: balls.map(b => ({ x: Math.round(b.x), y: Math.round(b.y), plat: b.plat, falling: b.falling, onLadder: b.onLadder })) }),
+  teleport: (x, plat) => { p.x = x; p.plat = plat; p.y = PLATS[plat].y; p.onGround = true; p.climbing = false; p.invuln = 0; }
+};
+})();
+</script>
+</body>
+</html>
