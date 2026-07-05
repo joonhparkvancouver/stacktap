@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Stacktap — one tap. how high can you go?</title>
+<meta name="description" content="Stacktap: a free, addictive one-tap stacking game. Drop blocks, land perfect combos, beat your best.">
+<style>
+  :root {
+    --ui: #ffffff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: #12121a;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  #game { position: fixed; inset: 0; display: block; }
+
+  .overlay {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    color: var(--ui); text-align: center;
+    pointer-events: none;
+    transition: opacity .25s ease;
+  }
+  .overlay.hidden { opacity: 0; pointer-events: none !important; }
+
+  #score {
+    position: fixed; top: max(20px, env(safe-area-inset-top)); left: 0; right: 0;
+    text-align: center; color: var(--ui);
+    font-size: 64px; font-weight: 800;
+    text-shadow: 0 2px 12px rgba(0,0,0,.35);
+    pointer-events: none;
+    opacity: 0; transition: opacity .25s ease;
+  }
+  #combo {
+    position: fixed; top: calc(max(20px, env(safe-area-inset-top)) + 76px); left: 0; right: 0;
+    text-align: center; color: #ffd76a;
+    font-size: 20px; font-weight: 700; letter-spacing: 2px;
+    text-transform: uppercase;
+    pointer-events: none; opacity: 0;
+    transition: opacity .2s ease, transform .2s ease;
+  }
+  #combo.show { opacity: 1; transform: scale(1.1); }
+
+  h1 { font-size: 52px; font-weight: 900; letter-spacing: -1px; margin-bottom: 10px; }
+  h1 span { color: #ffd76a; }
+  .tagline { font-size: 18px; opacity: .85; margin-bottom: 34px; }
+  .hint { font-size: 15px; opacity: .6; margin-top: 26px; letter-spacing: 1px; text-transform: uppercase; }
+  .pulse { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:.6 } 50% { opacity:1 } }
+
+  #gameover { background: rgba(10, 10, 18, .55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  #gameover .final { font-size: 88px; font-weight: 900; line-height: 1; }
+  #gameover .label { font-size: 15px; letter-spacing: 3px; text-transform: uppercase; opacity: .7; }
+  #gameover .best { margin-top: 14px; font-size: 18px; color: #ffd76a; font-weight: 700; }
+  #gameover .newbest { margin-top: 14px; font-size: 20px; color: #ffd76a; font-weight: 800;
+    animation: pulse 1.2s ease-in-out infinite; }
+
+  .btnrow { display: flex; gap: 14px; margin-top: 36px; }
+  button {
+    pointer-events: auto;
+    font: inherit; font-size: 18px; font-weight: 700;
+    color: #12121a; background: var(--ui);
+    border: none; border-radius: 999px;
+    padding: 15px 34px; cursor: pointer;
+    box-shadow: 0 4px 18px rgba(0,0,0,.35);
+    transition: transform .12s ease;
+  }
+  button:active { transform: scale(.94); }
+  button.ghost { background: transparent; color: var(--ui); border: 2px solid rgba(255,255,255,.5); }
+
+  /* Ad slot — swap the placeholder for a real ad unit (AdSense / AdinPlay) */
+  #ad-slot {
+    position: fixed; left: 0; right: 0;
+    bottom: env(safe-area-inset-bottom);
+    height: 0; /* set to ~60px when a real ad unit is installed */
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="score">0</div>
+<div id="combo">perfect ×2</div>
+
+<div id="menu" class="overlay">
+  <h1>stack<span>tap</span></h1>
+  <div class="tagline">one tap. how high can you go?</div>
+  <div class="hint pulse">tap anywhere to start</div>
+</div>
+
+<div id="gameover" class="overlay hidden">
+  <div class="label">score</div>
+  <div class="final" id="final">0</div>
+  <div class="best" id="besttext">best 0</div>
+  <div class="btnrow">
+    <button id="retry">Play again</button>
+    <button id="share" class="ghost">Share</button>
+  </div>
+</div>
+
+<div id="ad-slot"><!-- ad unit goes here --></div>
+
+<script>
+(() => {
+"use strict";
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const scoreEl = document.getElementById("score");
+const comboEl = document.getElementById("combo");
+const menuEl = document.getElementById("menu");
+const overEl = document.getElementById("gameover");
+const finalEl = document.getElementById("final");
+const bestEl = document.getElementById("besttext");
+
+let W = 0, H = 0, DPR = 1;
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth || document.documentElement.clientWidth || 360;
+  H = window.innerHeight || document.documentElement.clientHeight || 640;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  canvas.style.width = W + "px"; canvas.style.height = H + "px";
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener("resize", () => {
+  resize();
+  if (state === S.MENU) reset(); // re-place the idle tower for the new size
+});
+resize();
+
+// ---- tuning ----
+const BLOCK_H = 34;                 // block height (px)
+const BASE_W = () => Math.min(W * 0.6, 320);
+const PERFECT_TOL = 7;              // px tolerance for a perfect drop
+const GROW_PER_PERFECT = 10;        // width regained on 3+ combo
+const SPEED_BASE = 3.2;
+const SPEED_GAIN = 0.045;           // per block
+const SPEED_MAX = 9;
+
+// ---- state ----
+const S = { MENU: 0, PLAY: 1, DEAD: 2 };
+let state = S.MENU;
+let stack = [];        // {x, w, y, hue}  y = world-space top of block
+let mover = null;      // {x, w, y, dir, speed, hue}
+let debris = [];       // falling cut pieces {x, y, w, vx, vy, rot, vr, hue}
+let particles = [];
+let score = 0, combo = 0;
+let best = +(localStorage.getItem("stacktap.best") || 0);
+let camY = 0, camTarget = 0;   // camera offset (how far world has scrolled down)
+let hue = Math.random() * 360;
+let shakeT = 0;
+let flashT = 0;
+
+function blockColor(h, l = 58) { return `hsl(${h}, 62%, ${l}%)`; }
+
+function reset() {
+  stack = []; debris = []; particles = [];
+  score = 0; combo = 0; camY = 0; camTarget = 0;
+  hue = Math.random() * 360;
+  const w = BASE_W();
+  // foundation block
+  stack.push({ x: (W - w) / 2, w, y: H - 120, hue });
+  spawnMover();
+  scoreEl.textContent = "0";
+}
+
+function spawnMover() {
+  const top = stack[stack.length - 1];
+  hue = (hue + 7) % 360;
+  const fromLeft = stack.length % 2 === 1;
+  mover = {
+    x: fromLeft ? -top.w : W,
+    w: top.w,
+    y: top.y - BLOCK_H,
+    dir: fromLeft ? 1 : -1,
+    speed: Math.min(SPEED_BASE + stack.length * SPEED_GAIN, SPEED_MAX),
+    hue
+  };
+}
+
+function drop() {
+  const top = stack[stack.length - 1];
+  const left = Math.max(mover.x, top.x);
+  const right = Math.min(mover.x + mover.w, top.x + top.w);
+  const overlap = right - left;
+
+  if (overlap <= 0) {
+    // total miss — whole block falls
+    debris.push({ x: mover.x, y: mover.y, w: mover.w, vx: mover.dir * 2, vy: -2, rot: 0, vr: mover.dir * 0.06, hue: mover.hue });
+    return die();
+  }
+
+  const offset = Math.abs(mover.x - top.x);
+  let placed;
+  if (offset <= PERFECT_TOL) {
+    // perfect drop
+    combo++;
+    let w = top.w;
+    if (combo >= 3) w = Math.min(w + GROW_PER_PERFECT, BASE_W());
+    placed = { x: top.x + (top.w - w) / 2, w, y: mover.y, hue: mover.hue };
+    score += combo;               // combo bonus
+    flashT = 1;
+    burst(placed.x + placed.w / 2, placed.y, placed.hue, 18);
+    comboEl.textContent = combo === 1 ? "perfect!" : `perfect ×${combo}`;
+    comboEl.classList.add("show");
+    clearTimeout(comboEl._t);
+    comboEl._t = setTimeout(() => comboEl.classList.remove("show"), 900);
+  } else {
+    combo = 0;
+    // trimmed block + falling cut piece
+    placed = { x: left, w: overlap, y: mover.y, hue: mover.hue };
+    const cutW = mover.w - overlap;
+    const cutX = mover.x < top.x ? mover.x : right;
+    debris.push({ x: cutX, y: mover.y, w: cutW, vx: (cutX < left ? -1 : 1) * 1.5, vy: -1.5, rot: 0, vr: (cutX < left ? -1 : 1) * 0.05, hue: mover.hue });
+    shakeT = Math.min(0.25, cutW / 300);
+  }
+
+  score++;
+  stack.push(placed);
+  scoreEl.textContent = score;
+  // scroll camera so the tower stays in view
+  const topY = placed.y - camY;
+  if (topY < H * 0.42) camTarget = camY + (H * 0.42 - topY);
+  spawnMover();
+}
+
+function die() {
+  state = S.DEAD;
+  shakeT = 0.35;
+  const isBest = score > best;
+  if (isBest) { best = score; localStorage.setItem("stacktap.best", best); }
+  finalEl.textContent = score;
+  bestEl.className = isBest ? "newbest" : "best";
+  bestEl.textContent = isBest ? "★ new best!" : `best ${best}`;
+  setTimeout(() => {
+    scoreEl.style.opacity = 0;
+    overEl.classList.remove("hidden");
+  }, 450);
+}
+
+function burst(x, y, h, n) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, sp = 1 + Math.random() * 3.5;
+    particles.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.5, life: 1, hue: h });
+  }
+}
+
+// ---- input ----
+function tap(e) {
+  if (e.target && e.target.closest && e.target.closest("button")) return;
+  if (state === S.MENU) {
+    state = S.PLAY;
+    menuEl.classList.add("hidden");
+    scoreEl.style.opacity = 1;
+    reset();
+  } else if (state === S.PLAY && mover) {
+    drop();
+  }
+}
+window.addEventListener("pointerdown", tap);
+window.addEventListener("keydown", e => {
+  if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); tap(e); }
+});
+
+document.getElementById("retry").addEventListener("click", () => {
+  overEl.classList.add("hidden");
+  scoreEl.style.opacity = 1;
+  state = S.PLAY;
+  reset();
+});
+
+document.getElementById("share").addEventListener("click", async () => {
+  const text = `I stacked ${score} blocks in Stacktap 🏗️ Can you beat me?`;
+  const url = location.href.split("#")[0];
+  try {
+    if (navigator.share) await navigator.share({ title: "Stacktap", text, url });
+    else {
+      await navigator.clipboard.writeText(`${text} ${url}`);
+      const b = document.getElementById("share");
+      b.textContent = "Copied!";
+      setTimeout(() => (b.textContent = "Share"), 1500);
+    }
+  } catch (_) { /* user cancelled */ }
+});
+
+// ---- render loop ----
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min((now - last) / 16.667, 3); // in 60fps ticks
+  last = now;
+  step(dt);
+  requestAnimationFrame(frame);
+}
+
+function step(dt) {
+  // camera easing
+  camY += (camTarget - camY) * 0.08 * dt;
+
+  // physics
+  if (state === S.PLAY && mover) {
+    mover.x += mover.dir * mover.speed * dt;
+    if (mover.dir > 0 && mover.x + mover.w > W + mover.w * 0.5) mover.dir = -1;
+    if (mover.dir < 0 && mover.x < -mover.w * 0.5) mover.dir = 1;
+  }
+  for (const d of debris) {
+    d.vy += 0.35 * dt; d.x += d.vx * dt; d.y += d.vy * dt; d.rot += d.vr * dt;
+  }
+  debris = debris.filter(d => d.y - camY < H + 200);
+  for (const p of particles) {
+    p.vy += 0.12 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= 0.025 * dt;
+  }
+  particles = particles.filter(p => p.life > 0);
+  if (shakeT > 0) shakeT -= dt / 60;
+  if (flashT > 0) flashT -= dt / 12;
+
+  // background — hue drifts slowly with tower height
+  const bgHue = (hue + 180) % 360;
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, `hsl(${bgHue}, 28%, ${11 + Math.min(score * 0.08, 8)}%)`);
+  g.addColorStop(1, `hsl(${(bgHue + 40) % 360}, 30%, 7%)`);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  if (shakeT > 0) {
+    const s = shakeT * 18;
+    ctx.translate((Math.random() - 0.5) * s, (Math.random() - 0.5) * s);
+  }
+  ctx.translate(0, camY);
+
+  // stack (only visible ones)
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const b = stack[i];
+    if (b.y + camY > H + BLOCK_H) break;
+    drawBlock(b.x, b.y, b.w, b.hue);
+  }
+  // debris
+  for (const d of debris) {
+    ctx.save();
+    ctx.translate(d.x + d.w / 2, d.y + BLOCK_H / 2);
+    ctx.rotate(d.rot);
+    ctx.fillStyle = blockColor(d.hue, 48);
+    ctx.fillRect(-d.w / 2, -BLOCK_H / 2, d.w, BLOCK_H);
+    ctx.restore();
+  }
+  // mover
+  if (state === S.PLAY && mover) drawBlock(mover.x, mover.y, mover.w, mover.hue);
+  // particles
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = blockColor(p.hue, 70);
+    ctx.fillRect(p.x - 2.5, p.y - 2.5, 5, 5);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // perfect-drop flash
+  if (flashT > 0) {
+    ctx.fillStyle = `rgba(255,255,255,${flashT * 0.25})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+function drawBlock(x, y, w, h) {
+  // face
+  ctx.fillStyle = blockColor(h);
+  ctx.fillRect(x, y, w, BLOCK_H);
+  // top highlight + bottom shade for depth
+  ctx.fillStyle = "rgba(255,255,255,.22)";
+  ctx.fillRect(x, y, w, 5);
+  ctx.fillStyle = "rgba(0,0,0,.18)";
+  ctx.fillRect(x, y + BLOCK_H - 6, w, 6);
+}
+
+// idle tower behind the menu
+reset();
+requestAnimationFrame(frame);
+
+// headless test hook (harmless in production)
+window.__stacktap = {
+  step,
+  drop: () => { if (state === S.PLAY && mover) drop(); },
+  start: () => { if (state !== S.PLAY) { state = S.PLAY; menuEl.classList.add("hidden"); overEl.classList.add("hidden"); scoreEl.style.opacity = 1; reset(); } },
+  info: () => ({ state, score, combo, best, stack: stack.map(b => ({ x: b.x, w: b.w, y: b.y })), mover: mover && { x: mover.x, w: mover.w, y: mover.y, dir: mover.dir, speed: mover.speed } })
+};
+})();
+</script>
+</body>
+</html>
